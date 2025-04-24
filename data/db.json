@@ -1,0 +1,31 @@
+{
+  "responses": [
+    {
+      "id": "1",
+      "selected_liar": "video1",
+      "selected_truth": "video2",
+      "timestamp": "2025-04-24T12:00:00Z",
+      "is_correct": true,
+      "userType": "voter"
+    },
+    {
+      "id": "093a",
+      "selected_liar": "video1",
+      "selected_truth": "video2",
+      "timestamp": "2025-04-24T16:18:17.617Z",
+      "is_correct": true,
+      "userType": "voter"
+    },
+    {
+      "id": "04ac",
+      "selected_liar": "video2",
+      "selected_truth": "video1",
+      "timestamp": "2025-04-24T16:18:40.993Z",
+      "is_correct": false,
+      "userType": "voter"
+    }
+  ],
+  "adminAccess": {
+    "secretKey": "liars"
+  }
+}
