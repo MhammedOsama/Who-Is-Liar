@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from "react";
+import { createClient } from "@supabase/supabase-js";
 import truth from "../src/assets/Truth.mp4";
 import liar from "../src/assets/Liar.mp4";
+
+// Initialize Supabase client
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_KEY
+);
 
 function Voting() {
   const [selectedLiar, setSelectedLiar] = useState(null);
@@ -15,21 +22,42 @@ function Voting() {
 
   useEffect(() => {
     const verifyAdminAccess = async () => {
+      // 1. Check for admin key in URL
       const urlParams = new URLSearchParams(window.location.search);
       const adminKey = urlParams.get("admin");
-
       if (!adminKey) return;
 
       try {
-        const response = await fetch("http://localhost:8000/adminAccess");
-        const { secretKey } = await response.json();
+        // 2. Fetch admin key from Supabase
+        const { data, error } = await supabase
+          .from("secrets")
+          .select("admin_key")
+          .eq("id", 1) // Explicitly get the first record
+          .single();
 
-        if (adminKey === secretKey) {
+        if (error) throw error;
+
+        const isAuthorized = crypto.subtle.timingSafeEqual(
+          new TextEncoder().encode(data?.admin_key || ""),
+          new TextEncoder().encode(adminKey)
+        );
+
+        if (isAuthorized) {
           setIsAdmin(true);
           window.history.replaceState({}, "", window.location.pathname);
+
+          await supabase
+            .from("admin_logs")
+            .insert([{ action: "login", timestamp: new Date() }]);
         }
       } catch (error) {
         console.error("Admin verification failed:", error);
+        await supabase.from("errors").insert([
+          {
+            type: "admin_verification",
+            message: error.message,
+          },
+        ]);
       }
     };
 
@@ -42,18 +70,16 @@ function Voting() {
       const isCorrect = liarChoice === correctAnswer.liar;
       const truthChoice = liarChoice === "video1" ? "video2" : "video1";
 
-      await fetch("http://localhost:8000/responses", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const { error } = await supabase.from("responses").insert([
+        {
           selected_liar: liarChoice,
           selected_truth: truthChoice,
-          timestamp: new Date().toISOString(),
           is_correct: isCorrect,
           userType: "voter",
-        }),
-      });
-      updateResults();
+        },
+      ]);
+
+      if (!error) updateResults();
     } catch (err) {
       console.error("Error submitting choice:", err);
     }
@@ -61,15 +87,16 @@ function Voting() {
 
   const updateResults = async () => {
     try {
-      const res = await fetch("http://localhost:8000/responses");
-      const data = await res.json();
+      const { data, error } = await supabase.from("responses").select("*");
 
-      const correctCount = data.filter((r) => r.is_correct).length;
-      setResults({
-        correct: correctCount,
-        wrong: data.length - correctCount,
-        allResponses: isAdmin ? data : [],
-      });
+      if (!error) {
+        const correctCount = data.filter((r) => r.is_correct).length;
+        setResults({
+          correct: correctCount,
+          wrong: data.length - correctCount,
+          allResponses: isAdmin ? data : [],
+        });
+      }
     } catch (err) {
       console.error("Error fetching results:", err);
     }
@@ -94,7 +121,6 @@ function Voting() {
             background: "#f5f5f5",
             padding: "15px",
             borderRadius: "5px",
-            marginBottom: "20px",
           }}>
           <h3>Total Votes: {results.correct + results.wrong}</h3>
           <p>✅ Correct: {results.correct}</p>
@@ -108,7 +134,7 @@ function Voting() {
           </p>
         </div>
 
-        <h3>All Responses</h3>
+        <h3>Recent Votes</h3>
         <div style={{ maxHeight: "400px", overflowY: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
@@ -128,31 +154,33 @@ function Voting() {
               </tr>
             </thead>
             <tbody>
-              {results.allResponses.map((response, index) => (
-                <tr key={index} style={{ borderBottom: "1px solid #ddd" }}>
-                  <td style={{ padding: "8px", border: "1px solid #ddd" }}>
-                    {new Date(response.timestamp).toLocaleString()}
-                  </td>
-                  <td style={{ padding: "8px", border: "1px solid #ddd" }}>
-                    {response.selected_liar}
-                  </td>
-                  <td style={{ padding: "8px", border: "1px solid #ddd" }}>
-                    {response.selected_truth}
-                  </td>
-                  <td
-                    style={{
-                      padding: "8px",
-                      border: "1px solid #ddd",
-                      color: response.is_correct ? "green" : "red",
-                    }}>
-                    {response.is_correct ? "✅" : "❌"}
-                  </td>
-                </tr>
-              ))}
+              {results.allResponses
+                .slice()
+                .reverse()
+                .map((response, index) => (
+                  <tr key={index}>
+                    <td style={{ padding: "8px", border: "1px solid #ddd" }}>
+                      {new Date(response.timestamp).toLocaleString()}
+                    </td>
+                    <td style={{ padding: "8px", border: "1px solid #ddd" }}>
+                      {response.selected_liar}
+                    </td>
+                    <td style={{ padding: "8px", border: "1px solid #ddd" }}>
+                      {response.selected_truth}
+                    </td>
+                    <td
+                      style={{
+                        padding: "8px",
+                        border: "1px solid #ddd",
+                        color: response.is_correct ? "green" : "red",
+                      }}>
+                      {response.is_correct ? "✅" : "❌"}
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         </div>
-
         <button
           onClick={updateResults}
           style={{
@@ -160,9 +188,6 @@ function Voting() {
             padding: "10px 15px",
             backgroundColor: "#4CAF50",
             color: "white",
-            border: "none",
-            borderRadius: "4px",
-            cursor: "pointer",
           }}>
           Refresh Data
         </button>
@@ -173,7 +198,6 @@ function Voting() {
   // Regular user view
   return (
     <div
-      className='user-view'
       style={{
         maxWidth: "800px",
         margin: "0 auto",
@@ -183,31 +207,16 @@ function Voting() {
       <h1>Deception Detection</h1>
       <h3>Select the Liar</h3>
 
-      <div
-        className='videos'
-        style={{
-          display: "flex",
-          gap: "20px",
-          margin: "20px 0",
-        }}>
-        <video id='video1' controls style={{ width: "50%" }}>
+      <div style={{ display: "flex", gap: "20px", margin: "20px 0" }}>
+        <video controls style={{ width: "50%" }}>
           <source src={liar} type='video/mp4' />
-          Your browser doesn't support videos
         </video>
-
-        <video id='video2' controls style={{ width: "50%" }}>
+        <video controls style={{ width: "50%" }}>
           <source src={truth} type='video/mp4' />
-          Your browser doesn't support videos
         </video>
       </div>
 
-      <div
-        className='buttons'
-        style={{
-          display: "flex",
-          gap: "10px",
-          margin: "20px 0",
-        }}>
+      <div style={{ display: "flex", gap: "10px", margin: "20px 0" }}>
         <button
           onClick={() => handleChoice("video1")}
           disabled={selectedLiar !== null}
@@ -215,9 +224,6 @@ function Voting() {
             padding: "10px 15px",
             backgroundColor: selectedLiar === null ? "#2196F3" : "#cccccc",
             color: "white",
-            border: "none",
-            borderRadius: "4px",
-            cursor: selectedLiar === null ? "pointer" : "not-allowed",
           }}>
           Choose Video 1 as Liar
         </button>
@@ -228,13 +234,24 @@ function Voting() {
             padding: "10px 15px",
             backgroundColor: selectedLiar === null ? "#2196F3" : "#cccccc",
             color: "white",
-            border: "none",
-            borderRadius: "4px",
-            cursor: selectedLiar === null ? "pointer" : "not-allowed",
           }}>
           Choose Video 2 as Liar
         </button>
       </div>
+
+      {selectedLiar && (
+        <div
+          style={{
+            background: "#f5f5f5",
+            padding: "15px",
+            borderRadius: "5px",
+          }}>
+          <p>
+            Thank you for voting! You selected Video{" "}
+            {selectedLiar === "video1" ? 1 : 2} as the liar.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
